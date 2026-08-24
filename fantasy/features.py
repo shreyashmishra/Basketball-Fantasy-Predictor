@@ -131,6 +131,51 @@ def model_matrix(frame: pd.DataFrame) -> pd.DataFrame:
     return frame[FEATURE_COLUMNS].astype(float)
 
 
+def build_projection_features(
+    season_stats: pd.DataFrame,
+    feature_table: pd.DataFrame,
+    target_season: str,
+) -> pd.DataFrame:
+    """Create next-season rows from each player's latest available history."""
+    latest = feature_table.sort_values("season", key=lambda values: values.map(_season_year)).groupby("player_id").tail(1)
+    latest = latest.set_index("player_id")
+    current_stats = season_stats.sort_values("season", key=lambda values: values.map(_season_year)).groupby("player_id").tail(1).set_index("player_id")
+    rows: list[dict[str, object]] = []
+    for player_id, record in latest.iterrows():
+        raw = current_stats.loc[player_id] if player_id in current_stats.index else record
+        rows.append({
+            "player_id": player_id,
+            "player_name": record["player_name"],
+            "season": target_season,
+            "team": raw.get("team", record.get("team")),
+            "games_played": float("nan"),
+            "minutes_per_game": float("nan"),
+            "target_value": float("nan"),
+            "feature_lag_value_1": record["target_value"],
+            "feature_lag_value_2": record["feature_lag_value_1"],
+            "feature_lag_value_3": record["feature_lag_value_2"],
+            "feature_age": float(record["feature_age"]) + 1 if pd.notna(record["feature_age"]) else float("nan"),
+            "feature_games_lag_1": record["games_played"],
+            "feature_games_lag_2": record["feature_games_lag_1"],
+            "feature_games_lag_3": record["feature_games_lag_2"],
+            "feature_minutes_lag_1": record["minutes_per_game"],
+            "feature_minutes_lag_2": record["feature_minutes_lag_1"],
+            "feature_minutes_lag_3": record["feature_minutes_lag_2"],
+            "feature_minutes_trend": record["minutes_per_game"] - record["feature_minutes_lag_1"] if pd.notna(record["feature_minutes_lag_1"]) else float("nan"),
+            "feature_usage_lag_1": raw.get("usage_rate", record["feature_usage_lag_1"]),
+            # A future roster move is unknown without an external transaction feed.
+            "feature_team_change": 0,
+            "feature_limited_history": int(record["feature_limited_history"]),
+            "feature_yahoo_percent_owned": record["feature_yahoo_percent_owned"],
+        })
+    return pd.DataFrame(rows)
+
+
+def _season_year(value: object) -> int:
+    """Sort helper for season labels."""
+    return int(str(value)[:4])
+
+
 def assert_no_same_season_features(frame: pd.DataFrame) -> None:
     """Raise when a model feature violates the pre-season information boundary."""
     feature_columns = [column for column in frame.columns if column.startswith("feature_")]
@@ -140,4 +185,3 @@ def assert_no_same_season_features(frame: pd.DataFrame) -> None:
     missing = [column for column in FEATURE_COLUMNS if column not in frame.columns]
     if missing:
         raise AssertionError(f"Feature table is missing approved features: {', '.join(missing)}")
-

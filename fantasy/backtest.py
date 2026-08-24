@@ -80,8 +80,16 @@ def run_backtest(
         test_x, actual = model_matrix(eligible), eligible["target_value"]
         for prototype in models:
             model = type(prototype)(**_constructor_args(prototype))
-            model.fit(train_x, train_y)
-            rows.append(metric_row(target, model.name, actual, model.predict(test_x), top_n))
+            fit_x, predict_x = train_x, test_x
+            # ADP is an identity lookup rather than a numeric feature. Keep it
+            # outside the approved matrix so it cannot leak into learned models.
+            if model.name == "yahoo_adp":
+                fit_x = train_x.copy()
+                predict_x = test_x.copy()
+                fit_x["player_id"] = train["player_id"].to_numpy()
+                predict_x["player_id"] = eligible["player_id"].to_numpy()
+            model.fit(fit_x, train_y)
+            rows.append(metric_row(target, model.name, actual, model.predict(predict_x), top_n))
     result = pd.DataFrame(rows)
     if result.empty:
         return result
@@ -122,4 +130,3 @@ def calibration_fraction(actual: Iterable[float], lower: Iterable[float], upper:
     if len(actual_array) == 0:
         return float("nan")
     return float(np.mean((actual_array >= low_array) & (actual_array <= high_array)))
-

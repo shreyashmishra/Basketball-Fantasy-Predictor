@@ -10,6 +10,8 @@ from typing import Any
 
 import pandas as pd
 
+from .scoring import points_value
+
 STAT_COLUMNS = {
     "PLAYER_ID": "player_id",
     "PLAYER_NAME": "player_name",
@@ -146,3 +148,27 @@ def read_cached_aggregates(cache: DataCache, start: str, end: str) -> pd.DataFra
         frames.append(frame)
     return pd.concat(frames, ignore_index=True)
 
+
+def read_cached_game_history(
+    cache: DataCache,
+    start: str,
+    end: str,
+    weights: dict[str, float] | None = None,
+) -> tuple[dict[object, list[float]], dict[object, list[float]]]:
+    """Read cached game logs as per-player fantasy values and availability history."""
+    values: dict[object, list[float]] = {}
+    games: dict[object, list[float]] = {}
+    for season in season_range(start, end):
+        logs = cache.read("game_logs", season)
+        if logs is None:
+            continue
+        normalized = logs.rename(columns=STAT_COLUMNS)
+        if "player_id" not in normalized or "PTS" not in normalized:
+            continue
+        for record in normalized.to_dict("records"):
+            player_id = record["player_id"]
+            values.setdefault(player_id, []).append(points_value(record, weights))
+    aggregates = read_cached_aggregates(cache, start, end)
+    for player_id, group in aggregates.groupby("player_id"):
+        games[player_id] = group["games_played"].dropna().astype(float).tolist()
+    return values, games
